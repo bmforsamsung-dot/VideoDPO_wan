@@ -4,6 +4,8 @@ from packaging import version
 from omegaconf import OmegaConf
 from collections import OrderedDict
 import logging
+from pathlib import Path
+import shutil
 
 mainlogger = logging.getLogger("mainlogger")
 
@@ -35,18 +37,14 @@ def init_workspace(name, logdir, model_config, lightning_config, rank=0):
             OmegaConf.create({"lightning": lightning_config}),
             os.path.join(cfgdir, "lightning.yaml"),
         )
-        # 2024 0728 haoyu
-        # save data.yaml to the work sapace
-        src_path = model_config['data']['params']['train']['params']['data_root'] ## xx. configs/data/vidpro/train_data.yaml
-        root_dir = "/home/rliuay/haoyu/research/DPO-videocrafter"
-        # get current workdir 
-        
-        config_path = os.path.join(root_dir,src_path)
-        save_path = os.path.join(cfgdir,"train_data.yaml")
-        os.system(f"cp {src_path} {save_path}")
-        # import pdb;pdb.set_trace()
-        # print("test saving train data .yaml exiting");exit();
-        # save_path = os.path.join(cfgdir,"valid_data.yaml")
+        train_cfg = model_config["data"]["params"].get("train")
+        if train_cfg is not None:
+            src_path = Path(train_cfg["params"]["data_root"]).expanduser()
+            if not src_path.is_absolute():
+                src_path = (Path.cwd() / src_path).resolve()
+            save_path = Path(cfgdir) / "train_data.yaml"
+            if src_path.exists():
+                shutil.copy2(src_path, save_path)
     # exit()
     return workdir, ckptdir, cfgdir, loginfo
 
