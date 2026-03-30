@@ -47,7 +47,7 @@ Recent progress in generative diffusion models has greatly advanced text-to-vide
 # 📅TODO 
 - [ ] Merge to VideoTuna
 - [ ] Release t2v-turbo training dataset
-- [ ] Release code for cogvideox
+- [x] Release code for cogvideox
 - [x] 🔥🔥🔥 Release the dataset for VideoCrafter2
 - [x] Release code for videocrafter2 and t2v-turbo 
 
@@ -82,6 +82,18 @@ mkdir -p checkpoints/t2v-turbo
 wget -O checkpoints/t2v-turbo/unet_lora.pt "https://huggingface.co/jiachenli-ucsb/T2V-Turbo-VC2/resolve/main/unet_lora.pt?download=true"
 ```
 
+### CogVideoX
+CogVideoX in this repo uses Hugging Face diffusers checkpoints directly.
+No extra `ref_model.ckpt` conversion is required.
+
+Set `model.params.model_path` in `configs/cogvideo_dpo/config.yaml` to either:
+
+```shell
+THUDM/CogVideoX-2b
+```
+
+or a local diffusers-format CogVideoX checkpoint directory.
+
 ## Prepare Training Data 
 download vidpro-vc2-dataset.tar from the following link. 
 then ln -s the dataset to /data/vidpro-dpo-dataset.
@@ -92,7 +104,7 @@ or u could also add dataset with same structure in configs/dpo/vidpro/train_data
 
 ## Finetune VideoCrafter2
 ```shell
-bash configs/vc_dpo/run.sh
+bash configs/vc2_dpo/run.sh
 ```
 
 ## Inference VideoCrafter2
@@ -100,7 +112,30 @@ We support inference with different types of inputs and outputs.
 We support both json and text formats to read prompts. 
 
 ```shell
-bash script_sh/inference_t2v.sh
+bash scripts_sh/inference_t2v.sh
+```
+
+## Finetune CogVideoX
+CogVideoX uses the same VideoDPO preference-pair dataset format as VideoCrafter2.
+Before training, edit `configs/cogvideo_dpo/config.yaml`:
+
+- `model.params.model_path`: Hugging Face repo id or local CogVideoX checkpoint
+- `data.params.train.params.data_root`: training pair yaml
+- `data.params.train.params.resolution`: recommended `480x720` for CogVideoX-2b
+- `model.params.video_length`: recommended `49` frames
+
+```shell
+bash configs/cogvideo_dpo/run.sh
+```
+
+## Inference CogVideoX
+The CogVideoX inference script supports both the base Hugging Face model and a VideoDPO fine-tuned checkpoint.
+If you want to test the base model, keep `ckpt_path=''` in `scripts_sh/inference_cogvideox.sh`.
+If you want to test a fine-tuned checkpoint, set `ckpt_path` to a Lightning checkpoint such as `results/.../checkpoints/last.ckpt`.
+Default inference settings are stored in `configs/inference/inference_cogvideox_2b.yaml`.
+
+```shell
+bash scripts_sh/inference_cogvideox.sh
 ```
 ## Finetune T2V-Turbo(V1)
 ```shell
