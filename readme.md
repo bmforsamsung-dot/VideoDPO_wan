@@ -128,10 +128,18 @@ Before training, edit `configs/cogvideo_dpo/config.yaml`:
 bash configs/cogvideo_dpo/run.sh
 ```
 
+To train LoRA adapters only on top of the CogVideoX base model, edit
+`configs/cogvideo_dpo/config_lora.yaml` and run:
+
+```shell
+bash configs/cogvideo_dpo/run_lora.sh
+```
+
 ## Inference CogVideoX
 The CogVideoX inference script supports both the base Hugging Face model and a VideoDPO fine-tuned checkpoint.
 If you want to test the base model, keep `ckpt_path=''` in `scripts_sh/inference_cogvideox.sh`.
 If you want to test a fine-tuned checkpoint, set `ckpt_path` to a Lightning checkpoint such as `results/.../checkpoints/last.ckpt`.
+This also works for CogVideoX LoRA training checkpoints produced from `config_lora.yaml`.
 Default inference settings are stored in `configs/inference/inference_cogvideox_2b.yaml`.
 
 ```shell

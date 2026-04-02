@@ -10,9 +10,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 
-EXPNAME="${EXPNAME:-cogvideox-dpo-train}"
-CONFIG="${CONFIG:-configs/cogvideo_dpo/config.yaml}"
-LOGDIR="${LOGDIR:-./results/dpo-cogvideox}"
+EXPNAME="${EXPNAME:-cogvideox-dpo-lora-train}"
+CONFIG="${CONFIG:-configs/cogvideo_dpo/config_lora.yaml}"
+LOGDIR="${LOGDIR:-./results/dpo-cogvideox-lora}"
 DEVICES="${DEVICES:-0,1,2,3}"
 
 IFS=',' read -r -a GPU_LIST <<< "$DEVICES"

@@ -7,15 +7,20 @@ PYTHON_BIN="${PYTHON_BIN:-python}"
 
 # Override these with environment variables if needed.
 # Example:
-#   MODEL_PATH=THUDM/CogVideoX-2b \
+#   CKPT_PATH=results/dpo-cogvideox-lora/your_exp/checkpoints/last.ckpt \
 #   PROMPT_FILE=prompts/my_prompts.txt \
-#   bash scripts_sh/inference_cogvideox.sh
-config="${CONFIG:-configs/inference/inference_cogvideox_2b.yaml}"
+#   bash scripts_sh/inference_cogvideox_lora.sh
+config="${CONFIG:-configs/inference/inference_cogvideox_2b_lora.yaml}"
 model_path="${MODEL_PATH:-THUDM/CogVideoX-2b}"
-ckpt_path="${CKPT_PATH:-}"  # keep empty for base model, or set a full fine-tuned checkpoint
+ckpt_path="${CKPT_PATH:-}"  # e.g. results/dpo-cogvideox-lora/your_exp/checkpoints/last.ckpt
 prompt_file="${PROMPT_FILE:-prompts/test_prompts.txt}"
 res_dir="${RES_DIR:-results}"
-name="${NAME:-cogvideox_2b}"
+name="${NAME:-cogvideox_2b_lora}"
+
+if [ -z "${ckpt_path}" ]; then
+  echo "Set CKPT_PATH to a CogVideoX LoRA checkpoint, or edit scripts_sh/inference_cogvideox_lora.sh."
+  exit 1
+fi
 
 cd "${ROOT_DIR}"
 

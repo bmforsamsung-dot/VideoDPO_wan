@@ -1,5 +1,6 @@
 import logging
 import random
+from contextlib import contextmanager
 from typing import Dict, List, Optional, Tuple
 
 import pytorch_lightning as pl
@@ -11,6 +12,7 @@ from diffusers import (
     CogVideoXTransformer3DModel,
 )
 from diffusers.models.embeddings import get_3d_rotary_pos_embed
+from peft import LoraConfig
 from transformers import AutoTokenizer, T5EncoderModel
 
 
@@ -49,6 +51,7 @@ class CogVideoXVideoDPO(pl.LightningModule):
         optimizer_epsilon=1e-8,
         weight_decay=1e-4,
         max_grad_norm=1.0,
+        lora_args=None,
         logdir=None,
         **unused_kwargs,
     ):
@@ -59,7 +62,8 @@ class CogVideoXVideoDPO(pl.LightningModule):
         self.beta_dpo = beta_dpo
         self.first_stage_key = first_stage_key
         self.cond_stage_key = cond_stage_key
-        self.lora_args = []
+        self.lora_args = lora_args if lora_args is not None else []
+        self.use_lora = len(self.lora_args) != 0
         self.temporal_length = video_length
         self.image_size = list(image_size)
         self.log_every_t = log_every_t
@@ -78,6 +82,16 @@ class CogVideoXVideoDPO(pl.LightningModule):
                 f"Unsupported torch_dtype: {torch_dtype}. Expected one of {sorted(_DTYPE_MAP)}"
             )
         self.weight_dtype = _DTYPE_MAP[dtype_key]
+        self.lora_adapter_name = getattr(self.lora_args, "adapter_name", "default")
+        self.lora_rank = int(getattr(self.lora_args, "lora_rank", 64))
+        self.lora_alpha = int(getattr(self.lora_args, "lora_alpha", self.lora_rank))
+        self.lora_dropout = float(getattr(self.lora_args, "lora_dropout", 0.0))
+        self.lora_scale = float(getattr(self.lora_args, "lora_scale", 1.0))
+        default_target_modules = ["to_q", "to_k", "to_v", "to_out.0"]
+        self.lora_target_modules = list(
+            getattr(self.lora_args, "target_modules", default_target_modules)
+        )
+        self.lora_injected = False
 
         self.tokenizer = AutoTokenizer.from_pretrained(model_path, subfolder="tokenizer")
         self.text_encoder = T5EncoderModel.from_pretrained(
@@ -86,9 +100,11 @@ class CogVideoXVideoDPO(pl.LightningModule):
         self.transformer = CogVideoXTransformer3DModel.from_pretrained(
             model_path, subfolder="transformer", torch_dtype=self.weight_dtype
         )
-        self.ref_transformer = CogVideoXTransformer3DModel.from_pretrained(
-            model_path, subfolder="transformer", torch_dtype=self.weight_dtype
-        )
+        self.ref_transformer = None
+        if not self.use_lora:
+            self.ref_transformer = CogVideoXTransformer3DModel.from_pretrained(
+                model_path, subfolder="transformer", torch_dtype=self.weight_dtype
+            )
         self.vae = AutoencoderKLCogVideoX.from_pretrained(
             model_path, subfolder="vae", torch_dtype=self.weight_dtype
         )
@@ -102,18 +118,83 @@ class CogVideoXVideoDPO(pl.LightningModule):
             self.transformer.enable_gradient_checkpointing()
 
         self.text_encoder.requires_grad_(False)
-        self.ref_transformer.requires_grad_(False)
         self.vae.requires_grad_(False)
-        self.transformer.requires_grad_(True)
+        if self.ref_transformer is not None:
+            self.ref_transformer.requires_grad_(False)
+        self.transformer.requires_grad_(not self.use_lora)
 
         self.train()
 
     def train(self, mode: bool = True):
         super().train(mode)
         self.text_encoder.eval()
-        self.ref_transformer.eval()
+        if self.ref_transformer is not None:
+            self.ref_transformer.eval()
         self.vae.eval()
         return self
+
+    def inject_lora(self):
+        if not self.use_lora:
+            return
+        if self.lora_injected:
+            return
+
+        self.transformer.requires_grad_(False)
+        lora_config = LoraConfig(
+            r=self.lora_rank,
+            lora_alpha=self.lora_alpha,
+            lora_dropout=self.lora_dropout,
+            bias="none",
+            target_modules=self.lora_target_modules,
+        )
+        self.transformer.add_adapter(lora_config, adapter_name=self.lora_adapter_name)
+        self.transformer.set_adapters(
+            [self.lora_adapter_name], adapter_weights=[self.lora_scale]
+        )
+        self._cast_trainable_params_to_fp32(self.transformer)
+
+        trainable_params = sum(
+            param.numel() for param in self.transformer.parameters() if param.requires_grad
+        )
+        total_params = sum(param.numel() for param in self.transformer.parameters())
+        mainlogger.info(
+            "Injected CogVideoX LoRA adapter '%s' (rank=%d, alpha=%d, scale=%.4f). "
+            "Trainable params: %d / %d"
+            % (
+                self.lora_adapter_name,
+                self.lora_rank,
+                self.lora_alpha,
+                self.lora_scale,
+                trainable_params,
+                total_params,
+            )
+        )
+        self.lora_injected = True
+
+    @staticmethod
+    def _cast_trainable_params_to_fp32(module: torch.nn.Module):
+        for parameter in module.parameters():
+            if parameter.requires_grad and parameter.dtype != torch.float32:
+                parameter.data = parameter.data.to(torch.float32)
+
+    @contextmanager
+    def reference_transformer_context(self):
+        if self.ref_transformer is not None:
+            yield self.ref_transformer
+            return
+
+        if not self.use_lora or not self.lora_injected:
+            yield self.transformer
+            return
+
+        self.transformer.disable_adapters()
+        try:
+            yield self.transformer
+        finally:
+            self.transformer.enable_adapters()
+            self.transformer.set_adapters(
+                [self.lora_adapter_name], adapter_weights=[self.lora_scale]
+            )
 
     def configure_optimizers(self):
         params = [p for p in self.transformer.parameters() if p.requires_grad]
@@ -273,10 +354,11 @@ class CogVideoXVideoDPO(pl.LightningModule):
         model_losses = self._predict_model_losses(
             latents, prompt_embeddings, timesteps, noise, self.transformer
         )
-        with torch.no_grad():
-            ref_losses = self._predict_model_losses(
-                latents, prompt_embeddings, timesteps, noise, self.ref_transformer
-            )
+        with self.reference_transformer_context() as ref_transformer:
+            with torch.no_grad():
+                ref_losses = self._predict_model_losses(
+                    latents, prompt_embeddings, timesteps, noise, ref_transformer
+                )
 
         model_losses_w, model_losses_l = model_losses.chunk(2)
         ref_losses_w, ref_losses_l = ref_losses.chunk(2)
@@ -358,3 +440,21 @@ class CogVideoXVideoDPO(pl.LightningModule):
         else:
             logs["inputs"] = videos
         return logs
+
+    def on_save_checkpoint(self, checkpoint):
+        keys_to_remove = [
+            key for key in checkpoint["state_dict"].keys() if key.startswith("ref_transformer.")
+        ]
+        for key in keys_to_remove:
+            checkpoint["state_dict"].pop(key, None)
+
+        if self.use_lora:
+            checkpoint["cogvideox_lora_config"] = {
+                "adapter_name": self.lora_adapter_name,
+                "lora_rank": self.lora_rank,
+                "lora_alpha": self.lora_alpha,
+                "lora_dropout": self.lora_dropout,
+                "lora_scale": self.lora_scale,
+                "target_modules": list(self.lora_target_modules),
+            }
+        return checkpoint

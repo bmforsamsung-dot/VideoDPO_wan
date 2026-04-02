@@ -6,6 +6,7 @@ import torch
 from diffusers import CogVideoXPipeline
 from diffusers.utils import export_to_video
 from omegaconf import OmegaConf
+from peft import LoraConfig
 from pytorch_lightning import seed_everything
 
 
@@ -74,6 +75,7 @@ def merge_config_args(args):
     for key in ("model_path", "ckpt_path", "prompt_file", "savedir"):
         if getattr(args, key) is None:
             setattr(args, key, config_values.get(key))
+    args.lora_args = config_values.get("lora_args")
 
     missing = [key for key in ("model_path", "prompt_file", "savedir") if not getattr(args, key)]
     if missing:
@@ -96,7 +98,42 @@ def slugify(text, max_len=48):
     return (safe or "sample")[:max_len]
 
 
-def load_transformer_checkpoint(pipe, ckpt_path):
+def infer_lora_config(transformer_state_dict):
+    lora_a_keys = [key for key in transformer_state_dict.keys() if ".lora_A." in key]
+    if len(lora_a_keys) == 0:
+        return None
+
+    adapter_name = lora_a_keys[0].split(".lora_A.", 1)[1].rsplit(".weight", 1)[0]
+    rank = int(transformer_state_dict[lora_a_keys[0]].shape[0])
+    return {
+        "adapter_name": adapter_name,
+        "lora_rank": rank,
+        "lora_alpha": rank,
+        "lora_dropout": 0.0,
+        "lora_scale": 1.0,
+        "target_modules": ["to_q", "to_k", "to_v", "to_out.0"],
+    }
+
+
+def add_lora_adapter(pipe, lora_config_dict):
+    adapter_name = lora_config_dict.get("adapter_name", "default")
+    lora_config = LoraConfig(
+        r=int(lora_config_dict.get("lora_rank", 64)),
+        lora_alpha=int(lora_config_dict.get("lora_alpha", lora_config_dict.get("lora_rank", 64))),
+        lora_dropout=float(lora_config_dict.get("lora_dropout", 0.0)),
+        bias="none",
+        target_modules=list(
+            lora_config_dict.get("target_modules", ["to_q", "to_k", "to_v", "to_out.0"])
+        ),
+    )
+    pipe.transformer.add_adapter(lora_config, adapter_name=adapter_name)
+    pipe.transformer.set_adapters(
+        [adapter_name], adapter_weights=[float(lora_config_dict.get("lora_scale", 1.0))]
+    )
+    return adapter_name
+
+
+def load_transformer_checkpoint(pipe, ckpt_path, lora_config_override=None):
     ckpt = torch.load(ckpt_path, map_location="cpu")
     state_dict = ckpt.get("state_dict", ckpt)
     transformer_state_dict = {
@@ -107,11 +144,26 @@ def load_transformer_checkpoint(pipe, ckpt_path):
     if len(transformer_state_dict) == 0:
         raise ValueError(f"No transformer weights found in checkpoint: {ckpt_path}")
 
+    lora_config = lora_config_override or ckpt.get("cogvideox_lora_config")
+    has_lora_weights = any(".lora_A." in key or ".lora_B." in key for key in transformer_state_dict)
+    if has_lora_weights:
+        if lora_config is None:
+            lora_config = infer_lora_config(transformer_state_dict)
+        if lora_config is None:
+            raise ValueError(
+                f"Detected LoRA weights in checkpoint but failed to infer LoRA config: {ckpt_path}"
+            )
+        adapter_name = add_lora_adapter(pipe, lora_config)
+    else:
+        adapter_name = None
+
     missing, unexpected = pipe.transformer.load_state_dict(transformer_state_dict, strict=False)
     print(
         f"Loaded transformer checkpoint from {ckpt_path}. "
         f"Missing keys: {len(missing)} | Unexpected keys: {len(unexpected)}"
     )
+    if adapter_name is not None:
+        print(f"Activated LoRA adapter: {adapter_name}")
 
 
 def main():
@@ -138,7 +190,7 @@ def main():
 
     ckpt_path = args.ckpt_path or None
     if ckpt_path is not None and ckpt_path.strip():
-        load_transformer_checkpoint(pipe, ckpt_path)
+        load_transformer_checkpoint(pipe, ckpt_path, lora_config_override=args.lora_args)
 
     if args.enable_model_cpu_offload:
         pipe.enable_model_cpu_offload()

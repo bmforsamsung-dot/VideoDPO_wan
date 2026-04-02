@@ -263,5 +263,7 @@ if __name__ == "__main__":
             raise
     if args.val:
         trainer.validate(model, data)
-    if args.test or not trainer.interrupted:
+    if args.test:
+        trainer.test(model, data)
+    elif not trainer.interrupted and hasattr(data, "test_dataloader"):
         trainer.test(model, data)
