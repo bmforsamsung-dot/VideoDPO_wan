@@ -135,6 +135,31 @@ To train LoRA adapters only on top of the CogVideoX base model, edit
 bash configs/cogvideo_dpo/run_lora.sh
 ```
 
+
+## Finetune Wan2.1-14B
+Wan2.1-14B uses Hugging Face diffusers checkpoints directly.
+Before training, edit `configs/wan21_14b_dpo/config.yaml`:
+
+- `model.params.model_path`: Hugging Face repo id or local Wan2.1 diffusers checkpoint
+- `data.params.train.params.data_root`: training pair yaml
+- `data.params.train.params.resolution`: default `480x832`
+- `model.params.video_length`: default `81` frames
+
+```shell
+bash configs/wan21_14b_dpo/run.sh
+```
+
+## Inference Wan2.1-14B
+Wan2.1 inference supports both the base Hugging Face model and a VideoDPO fine-tuned checkpoint.
+If you want to test the base model, keep `ckpt_path=''` in `scripts_sh/inference_wan21.sh`.
+If you want to test a fine-tuned checkpoint, set `ckpt_path` to a Lightning checkpoint such as `results/.../checkpoints/last.ckpt`.
+This also works for Wan LoRA checkpoints when `wan_lora_config` is present in the checkpoint.
+Default inference settings are stored in `configs/inference/inference_wan21_14b.yaml`.
+
+```shell
+bash scripts_sh/inference_wan21.sh
+```
+
 ## Inference CogVideoX
 The CogVideoX inference script supports both the base Hugging Face model and a VideoDPO fine-tuned checkpoint.
 If you want to test the base model, keep `ckpt_path=''` in `scripts_sh/inference_cogvideox.sh`.
