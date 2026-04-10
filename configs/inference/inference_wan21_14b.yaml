@@ -1,0 +1,20 @@
+model:
+  model_path: Wan-AI/Wan2.1-T2V-14B-Diffusers
+  ckpt_path: ""  # e.g. results/dpo-wan21-14b/your_exp/checkpoints/last.ckpt or Wan LoRA checkpoint
+
+inference:
+  prompt_file: prompts/test_prompts.txt
+  savedir: results/wan21_14b
+  height: 480
+  width: 832
+  num_frames: 81
+  num_inference_steps: 50
+  guidance_scale: 5.0
+  num_videos_per_prompt: 1
+  fps: 16
+  flow_shift: 3.0  # 3.0 for 480p, 5.0 for 720p
+  dtype: bf16
+  device: cuda
+  enable_model_cpu_offload: false
+  enable_slicing: true
+  enable_tiling: true

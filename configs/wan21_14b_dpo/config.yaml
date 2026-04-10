@@ -1,0 +1,60 @@
+model:
+  base_learning_rate: 1.0e-06
+  scale_lr: False
+  target: lvdm.models.wan_dpo.WanVideoDPO
+  params:
+    model_path: Wan-AI/Wan2.1-T2V-14B-Diffusers
+    beta_dpo: 5000.0
+    first_stage_key: video
+    cond_stage_key: caption
+    video_length: 81
+    image_size:
+    - 480
+    - 832
+    log_every_t: 20
+    uncond_prob: 0.0
+    torch_dtype: bf16
+    gradient_checkpointing: True
+    enable_slicing: True
+    enable_tiling: True
+    optimizer_beta1: 0.9
+    optimizer_beta2: 0.95
+    optimizer_epsilon: 1.0e-08
+    weight_decay: 1.0e-04
+    max_grad_norm: 1.0
+    max_sequence_length: 512
+
+data:
+  target: data.lightning_data.DataModuleFromConfig
+  params:
+    batch_size: 1
+    num_workers: 8
+    wrap: false
+    train:
+      target: data.wan_video_data.TextVideoDPO
+      params:
+        dupbeta: 0
+        data_root: configs/wan21_14b_dpo/vidpro/train_data.yaml
+        resolution:
+        - 480
+        - 832
+        video_length: 81
+        subset_split: all
+
+lightning:
+  callbacks:
+    batch_logger:
+      params:
+        batch_frequency: -1
+    model_checkpoint:
+      params:
+        save_last: True
+        filename: "{epoch:04}-{step:06}"
+  trainer:
+    accelerator: gpu
+    benchmark: True
+    log_every_n_steps: 1
+    num_nodes: 1
+    accumulate_grad_batches: 1
+    max_epochs: 10
+    precision: bf16
