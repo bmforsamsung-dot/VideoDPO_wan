@@ -1,6 +1,7 @@
 model:
   model_path: THUDM/CogVideoX-2b
-  ckpt_path: ""  # e.g. results/dpo-cogvideox-lora/your_exp/checkpoints/last.ckpt
+  ckpt_path: ""  # Optional Lightning checkpoint path (e.g. .../checkpoints/last.ckpt). Only LoRA weights are extracted.
+  lora_path: ""  # LoRA-only checkpoint path (dir or file): e.g. .../adapter_model.safetensors
   lora_args:
     adapter_name: cogvideox-dpo
     lora_rank: 64
