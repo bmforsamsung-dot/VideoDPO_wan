@@ -25,7 +25,8 @@ def parse_args():
     parser.add_argument("--config", type=str, default=None)
     parser.add_argument("--seed", type=int, default=20230211)
     parser.add_argument("--model_path", type=str, default=None)
-    parser.add_argument("--ckpt_path", type=str, default=None)
+    parser.add_argument("--ckpt_path", type=str, nargs="?", const="", default=None)
+    parser.add_argument("--lora_path", type=str, nargs="?", const="", default=None)
     parser.add_argument("--prompt_file", type=str, default=None)
     parser.add_argument("--savedir", type=str, default=None)
     parser.add_argument("--height", type=int, default=None)
@@ -72,7 +73,7 @@ def merge_config_args(args):
         if getattr(args, key) is None:
             setattr(args, key, config_values.get(key, value))
 
-    for key in ("model_path", "ckpt_path", "prompt_file", "savedir"):
+    for key in ("model_path", "ckpt_path", "lora_path", "prompt_file", "savedir"):
         if getattr(args, key) is None:
             setattr(args, key, config_values.get(key))
     args.lora_args = config_values.get("lora_args")
@@ -166,6 +167,53 @@ def load_transformer_checkpoint(pipe, ckpt_path, lora_config_override=None):
         print(f"Activated LoRA adapter: {adapter_name}")
 
 
+def load_lora_from_lightning_checkpoint(pipe, ckpt_path, lora_config_override=None):
+    ckpt = torch.load(ckpt_path, map_location="cpu")
+    state_dict = ckpt.get("state_dict", ckpt)
+    transformer_lora_state_dict = {
+        key[len("transformer.") :]: value
+        for key, value in state_dict.items()
+        if key.startswith("transformer.") and (".lora_A." in key or ".lora_B." in key)
+    }
+    if len(transformer_lora_state_dict) == 0:
+        raise ValueError(f"No transformer LoRA weights found in checkpoint: {ckpt_path}")
+
+    lora_config = lora_config_override or ckpt.get("cogvideox_lora_config")
+    if lora_config is None:
+        lora_config = infer_lora_config(transformer_lora_state_dict)
+    if lora_config is None:
+        raise ValueError(f"Failed to infer LoRA config from checkpoint: {ckpt_path}")
+
+    adapter_name = add_lora_adapter(pipe, lora_config)
+    missing, unexpected = pipe.transformer.load_state_dict(transformer_lora_state_dict, strict=False)
+    print(
+        f"Loaded LoRA weights from Lightning checkpoint {ckpt_path}. "
+        f"Missing keys: {len(missing)} | Unexpected keys: {len(unexpected)}"
+    )
+    print(f"Activated LoRA adapter: {adapter_name}")
+
+
+def load_lora_checkpoint(pipe, lora_path, lora_config_override=None):
+    adapter_name = "default"
+    lora_scale = 1.0
+    if lora_config_override is not None:
+        adapter_name = lora_config_override.get("adapter_name", adapter_name)
+        lora_scale = float(lora_config_override.get("lora_scale", lora_scale))
+
+    lora_path = Path(lora_path)
+    load_kwargs = {"adapter_name": adapter_name}
+    if lora_path.is_file():
+        load_kwargs["weight_name"] = lora_path.name
+        lora_root = str(lora_path.parent)
+    else:
+        lora_root = str(lora_path)
+
+    pipe.load_lora_weights(lora_root, **load_kwargs)
+    pipe.set_adapters([adapter_name], adapter_weights=[lora_scale])
+    print(f"Loaded LoRA checkpoint from {lora_path}")
+    print(f"Activated LoRA adapter: {adapter_name} (scale={lora_scale})")
+
+
 def main():
     args = parse_args()
     seed_everything(args.seed)
@@ -188,9 +236,13 @@ def main():
     if args.enable_tiling:
         pipe.vae.enable_tiling()
 
+    lora_path = args.lora_path or None
+    if lora_path is not None and lora_path.strip():
+        load_lora_checkpoint(pipe, lora_path, lora_config_override=args.lora_args)
+
     ckpt_path = args.ckpt_path or None
     if ckpt_path is not None and ckpt_path.strip():
-        load_transformer_checkpoint(pipe, ckpt_path, lora_config_override=args.lora_args)
+        load_lora_from_lightning_checkpoint(pipe, ckpt_path, lora_config_override=args.lora_args)
 
     if args.enable_model_cpu_offload:
         pipe.enable_model_cpu_offload()

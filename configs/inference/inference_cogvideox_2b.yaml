@@ -1,6 +1,7 @@
 model:
   model_path: THUDM/CogVideoX-2b
-  ckpt_path: ""  # e.g. results/dpo-cogvideox/your_exp/checkpoints/last.ckpt or LoRA checkpoint from config_lora
+  ckpt_path: ""  # Optional Lightning checkpoint path (e.g. .../checkpoints/last.ckpt). Only LoRA weights are extracted.
+  lora_path: ""  # Optional LoRA-only checkpoint path (dir or file)
 
 inference:
   prompt_file: prompts/test_prompts.txt
